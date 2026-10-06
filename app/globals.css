@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-inter);
+}
+
+:root {
+  /* Dynamic premium dark mode palette */
+  --bg-base: #050505;
+  --bg-surface: #121212;
+  --bg-surface-elevated: #1a1a1a;
+  
+  --text-primary: #f3f4f6;
+  --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  
+  --accent-primary: #4f46e5;
+  --accent-primary-hover: #4338ca;
+  --accent-rider: #10b981;
+  --accent-rider-hover: #059669;
+  
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  
+  --shadow-glow: 0 0 20px rgba(79, 70, 229, 0.15);
+  --shadow-glow-rider: 0 0 20px rgba(16, 185, 129, 0.15);
+}
+
+/* Base resets */
+html, body {
+  background-color: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-inter), sans-serif;
+  height: 100%;
+  overscroll-behavior-y: none;
+}
+
+/* MapLibre overrides for dark mode */
+.maplibregl-ctrl-group {
+  background: var(--bg-surface-elevated) !important;
+  border: 1px solid var(--border-subtle);
+}
+.maplibregl-ctrl-group button {
+  color: var(--text-primary) !important;
+}
+.maplibregl-ctrl-group button+button {
+  border-top: 1px solid var(--border-subtle) !important;
+}
+
+/* Utilities for glassmorphism */
+.glass-panel {
+  background: rgba(18, 18, 18, 0.6);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: 1rem;
+}
+
+/* Smooth micro-animations */
+.hover-lift {
+  transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), var(--shadow-glow);
+}
+
+/* Mobile-friendly touch targets */
+button, a {
+  touch-action: manipulation;
+}
