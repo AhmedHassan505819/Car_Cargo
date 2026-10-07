@@ -86,7 +86,7 @@ export function useDeliveryChannel(options: UseDeliveryChannelOptions) {
       if (!error && data) {
         setState((prev) => ({
           ...prev,
-          status: data.status as DeliveryStatus,
+          status: (data as any).status as DeliveryStatus,
           lastUpdate: Date.now(),
         }));
       }

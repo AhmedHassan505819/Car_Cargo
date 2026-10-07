@@ -54,7 +54,7 @@ function LoginForm() {
     const action = isLogin ? login : signup;
 
     try {
-      const res = await action(formData);
+      const res = await action(formData) as any;
       if (res?.error) setError(res.error);
       else if (res?.success) setSuccessMsg(res.success);
     } catch (err) {
