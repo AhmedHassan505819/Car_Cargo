@@ -115,7 +115,7 @@ export default function LandingPage() {
           className="max-w-[820px] text-[clamp(2.4rem,6vw,4.6rem)] font-medium leading-[1.02] tracking-[-0.035em]"
           style={{ fontFamily: "var(--font-display)" }}
         >
-          Small parcels across Abbottabad, carried by riders already nearby.
+          Small parcels carried by riders already nearby.
         </h1>
         <p className="mt-6 max-w-[560px] text-[17px] leading-relaxed text-[#8FA8A8]">
           Post your parcel, choose a rider close to you, and hand it over with a one-time code.
