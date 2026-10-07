@@ -1,219 +1,221 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet';
+import { useEffect, useRef, useState } from 'react';
+import { MapContainer, TileLayer, Marker, Polyline, useMapEvents, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Search, Navigation, Globe } from 'lucide-react';
+import { Search, LocateFixed, Languages, Plus, Minus, MapPin, X } from 'lucide-react';
 
-// Fix Leaflet's default icon paths in bundlers
-delete (L.Icon.Default.prototype as any)._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+/* Palette: night #0C2229 · deep #0A1D23 · bone #E8EFEA · mute #8FA8A8 · amber #E9A23B */
+
+type LngLat = { lng: number; lat: number };
+
+const TILE_EN = 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+const TILE_LOCAL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'; // fine for dev; self-host tiles before launch
+
+const PAKISTAN_BOUNDS: L.LatLngBoundsExpression = [
+  [23.6, 60.8],
+  [37.1, 77.8],
+];
+
+/* ---------- icons ---------- */
+const iconCache: Record<string, L.DivIcon> = {};
+const pinIcon = (color: string, label = '') => {
+  const key = color + label;
+  if (!iconCache[key]) {
+    iconCache[key] = L.divIcon({
+      className: '',
+      html: `<div style="width:32px;height:32px;border-radius:50%;background:${color};border:3px solid #0C2229;box-shadow:0 0 0 2px ${color}88,0 8px 16px rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;font:600 13px/1 system-ui,sans-serif;color:#0C2229;cursor:grab">${label}</div>`,
+      iconSize: [32, 32],
+      iconAnchor: [16, 16],
+    });
+  }
+  return iconCache[key];
+};
+
+const youIcon = L.divIcon({
+  className: '',
+  html: `<div style="position:relative;width:28px;height:28px;display:flex;align-items:center;justify-content:center">
+    <span class="bba-ring" style="position:absolute;inset:0;border-radius:50%;background:#8FB8E8"></span>
+    <span style="position:relative;width:14px;height:14px;border-radius:50%;background:#8FB8E8;border:3px solid #0C2229"></span>
+  </div>`,
+  iconSize: [28, 28],
+  iconAnchor: [14, 14],
 });
 
-// Component to handle map clicks
-function MapEvents({ onMapClick }: { onMapClick?: (lngLat: { lng: number; lat: number }) => void }) {
-  useMapEvents({
-    click(e) {
-      if (onMapClick) {
-        onMapClick({ lng: e.latlng.lng, lat: e.latlng.lat });
-      }
-    },
-  });
+/* ---------- map helpers ---------- */
+function MapEvents({ onMapClick }: { onMapClick: (ll: LngLat) => void }) {
+  useMapEvents({ click: (e) => onMapClick({ lng: e.latlng.lng, lat: e.latlng.lat }) });
   return null;
 }
 
-// Component to programmatically fly to a location
-function MapController({ target }: { target: [number, number] | null }) {
+function FlyTo({ target }: { target: [number, number] | null }) {
   const map = useMap();
   useEffect(() => {
-    if (target) {
-      map.flyTo(target, 16, { animate: true, duration: 1.5 });
-    }
+    if (target) map.flyTo(target, 16, { animate: true, duration: 1.2 });
   }, [target, map]);
   return null;
 }
 
-// Icon factories
-const createCustomIcon = (color: string) => {
-  return L.divIcon({
-    className: 'custom-div-icon',
-    html: `<div style="background-color: ${color};" class="w-5 h-5 rounded-full shadow-[0_0_15px_rgba(0,0,0,0.5)] border-2 border-white"></div>`,
-    iconSize: [20, 20],
-    iconAnchor: [10, 10],
-  });
-};
+function FitBounds({ points, enabled }: { points: [number, number][]; enabled: boolean }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!enabled || points.length < 2) return;
+    map.invalidateSize();
+    map.fitBounds(points as L.LatLngBoundsExpression, { padding: [70, 70], animate: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled]);
+  return null;
+}
 
-const glowingIcon = L.divIcon({
-  className: 'custom-div-icon',
-  html: `<div class="relative flex items-center justify-center w-8 h-8">
-           <div class="absolute w-full h-full bg-blue-500 rounded-full animate-ping opacity-60"></div>
-           <div class="relative w-4 h-4 bg-blue-500 border-2 border-white rounded-full shadow-lg"></div>
-         </div>`,
-  iconSize: [32, 32],
-  iconAnchor: [16, 16],
-});
-
+/* ---------- component ---------- */
 interface MapProps {
   center?: [number, number]; // [lng, lat]
   zoom?: number;
-  markers?: Array<{
-    id: string;
-    lng: number;
-    lat: number;
-    color?: string;
-  }>;
-  onMapClick?: (lngLat: { lng: number; lat: number }) => void;
+  markers?: Array<{ id: string; lng: number; lat: number; color?: string; label?: string }>;
+  onMapClick?: (lngLat: LngLat, label?: string) => void;
+  onMarkerDrag?: (id: string, lngLat: LngLat) => void;
+  draggableIds?: string[];
+  showRoute?: boolean;
+  fitToMarkers?: boolean;
+  hint?: string;
+  accent?: string;
   className?: string;
 }
 
-export default function Map({
-  center = [73.2215, 34.1495], // Default to Abbottabad (lng, lat)
+export default function MapView({
+  center = [73.2215, 34.1495], // Abbottabad
   zoom = 13,
   markers = [],
   onMapClick,
-  className = "w-full h-full",
+  onMarkerDrag,
+  draggableIds = [],
+  showRoute = false,
+  fitToMarkers = false,
+  hint,
+  accent = '#E9A23B',
+  className = 'w-full h-full',
 }: MapProps) {
-  // Map expects [lat, lng]
-  const defaultLeafletCenter: [number, number] = [center[1], center[0]];
-  
-  const [flyToTarget, setFlyToTarget] = useState<[number, number] | null>(null);
-  const [currentLoc, setCurrentLoc] = useState<[number, number] | null>(null);
-  
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isSearching, setIsSearching] = useState(false);
-  const [suggestions, setSuggestions] = useState<any[]>([]);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const debounceRef = useRef<NodeJS.Timeout | null>(null);
-  
-  // Language toggle state (true = English, false = Local/Urdu)
+  const [map, setMap] = useState<L.Map | null>(null);
+  const [flyTarget, setFlyTarget] = useState<[number, number] | null>(null);
+  const [youAt, setYouAt] = useState<[number, number] | null>(null);
+  const [query, setQuery] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [results, setResults] = useState<any[]>([]);
+  const [open, setOpen] = useState(false);
   const [isEnglish, setIsEnglish] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const TILE_EN = 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png';
-  const TILE_LOCAL = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
 
-  // Pakistan rough bounding box
-  const PAKISTAN_BOUNDS: L.LatLngBoundsExpression = [
-    [23.6, 60.8], // Southwest
-    [37.1, 77.8], // Northeast
-  ];
+  const flash = (msg: string) => {
+    setNotice(msg);
+    setTimeout(() => setNotice(null), 3500);
+  };
 
-  const fetchSuggestions = async (query: string) => {
-    if (!query.trim()) {
-      setSuggestions([]);
-      return;
-    }
-    setIsSearching(true);
+  const search = async (q: string) => {
+    if (!q.trim()) return setResults([]);
+    setSearching(true);
     try {
-      // Use Photon API instead of Nominatim for superior fuzzy search, typos, and partial matches
-      // bbox=minLon,minLat,maxLon,maxLat restricts search to Pakistan
-      const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=5&bbox=60.8,23.6,77.8,37.1`);
+      const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=5&bbox=60.8,23.6,77.8,37.1`);
       const data = await res.json();
-      setSuggestions(data.features || []);
-    } catch (err) {
-      console.error("Search failed", err);
+      setResults(data.features || []);
+    } catch {
+      flash('Search is unavailable. Tap the map instead.');
     } finally {
-      setIsSearching(false);
+      setSearching(false);
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value;
-    setSearchQuery(val);
-    setShowSuggestions(true);
-    
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      fetchSuggestions(val);
-    }, 400); // slightly faster debounce for better autocomplete feel
+  const onType = (v: string) => {
+    setQuery(v);
+    setOpen(true);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => search(v), 350);
   };
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (suggestions.length > 0) {
-      handleSelectSuggestion(suggestions[0]);
-    } else {
-      fetchSuggestions(searchQuery);
-    }
-  };
-
-  const handleSelectSuggestion = (place: any) => {
-    // Photon uses GeoJSON format
-    const props = place.properties;
+  const pick = (place: any) => {
+    const p = place.properties;
     const [lon, lat] = place.geometry.coordinates;
-    
-    const displayName = [props.name, props.city, props.state].filter(Boolean).join(', ');
-    
-    setSearchQuery(displayName);
-    setShowSuggestions(false);
-    setFlyToTarget([lat, lon]);
-    if (onMapClick) onMapClick({ lat, lng: lon });
+    const name = [p.name, p.city || p.district].filter(Boolean).join(', ');
+    setQuery(name);
+    setOpen(false);
+    setFlyTarget([lat, lon]);
+    onMapClick?.({ lat, lng: lon }, name);
   };
 
-  const handleLocateMe = () => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition((position) => {
-        const { latitude, longitude } = position.coords;
-        setCurrentLoc([latitude, longitude]);
-        setFlyToTarget([latitude, longitude]);
-        if (onMapClick) onMapClick({ lat: latitude, lng: longitude });
-      }, (err) => {
-        console.error("Geolocation error", err);
-        alert("Please enable location permissions in your browser.");
-      });
-    } else {
-      alert("Geolocation is not supported by your browser.");
-    }
+  const locate = () => {
+    if (!('geolocation' in navigator)) return flash('Location is not supported on this device.');
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const pt: [number, number] = [coords.latitude, coords.longitude];
+        setYouAt(pt);
+        setFlyTarget(pt);
+        onMapClick?.({ lat: pt[0], lng: pt[1] }, 'My current location');
+      },
+      () => flash('Allow location access in your browser to use this.'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
   };
+
+  const pickup = markers.find((m) => m.id === 'pickup');
+  const dropoff = markers.find((m) => m.id === 'dropoff');
+  const routePts: [number, number][] | null = showRoute && pickup && dropoff ? [[pickup.lat, pickup.lng], [dropoff.lat, dropoff.lng]] : null;
+
+  const ctl =
+    'flex h-12 items-center justify-center rounded-[14px] border border-[#E8EFEA]/15 bg-[#0A1D23]/90 text-[#E8EFEA] backdrop-blur-md transition-colors hover:bg-[#123038] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E9A23B]';
 
   return (
-    <div className={`relative ${className} leaflet-map-container overflow-hidden`}>
-      
-      {/* Top Search Bar & Controls Overlay */}
-      <div className="absolute top-4 left-4 right-4 z-[400] flex flex-col md:flex-row gap-2 pointer-events-none">
-        
-        {/* Search Bar Container */}
-        <div className="flex-1 relative pointer-events-auto">
-          <form 
-            onSubmit={handleSearch} 
-            className="bg-[#1a1a1a]/90 backdrop-blur-md border border-[#333] rounded-xl shadow-2xl p-1 flex items-center transition-all focus-within:border-indigo-500 focus-within:shadow-indigo-500/20 w-full"
+    <div className={`bba-map relative overflow-hidden ${className} ${isEnglish ? 'tint-en' : 'tint-local'} ${hint ? 'selecting' : ''}`}>
+      {/* Search and controls */}
+      <div className="pointer-events-none absolute left-3 right-3 top-3 z-[500] flex items-start gap-2">
+        <div className="pointer-events-auto relative min-w-0 flex-1">
+          <form
+            onSubmit={(e) => { e.preventDefault(); results[0] ? pick(results[0]) : search(query); }}
+            className="flex h-12 items-center rounded-[14px] border bg-[#0A1D23]/92 pl-3 pr-1 backdrop-blur-md transition-colors"
+            style={{ borderColor: open ? accent : 'rgba(232,239,234,.15)' }}
           >
-            <div className="p-2 text-gray-400">
-              {isSearching ? (
-                <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <Search className="w-5 h-5" />
-              )}
-            </div>
+            {searching ? (
+              <span className="h-[18px] w-[18px] animate-spin rounded-full border-2 border-t-transparent" style={{ borderColor: accent, borderTopColor: 'transparent' }} />
+            ) : (
+              <Search className="h-[18px] w-[18px] text-[#8FA8A8]" />
+            )}
             <input
-              type="text"
-              value={searchQuery}
-              onChange={handleInputChange}
-              onFocus={() => setShowSuggestions(true)}
-              placeholder="Search locations in Pakistan..."
-              className="flex-1 bg-transparent border-none outline-none text-white px-2 placeholder-gray-500"
+              value={query}
+              onChange={(e) => onType(e.target.value)}
+              onFocus={() => setOpen(true)}
+              onBlur={() => setTimeout(() => setOpen(false), 150)}
+              placeholder="Search a place or area"
+              aria-label="Search a place"
+              className="min-w-0 flex-1 bg-transparent px-3 text-[15px] text-[#E8EFEA] outline-none placeholder:text-[#8FA8A8]"
             />
-            <button type="submit" className="hidden"></button>
+            {query && (
+              <button type="button" aria-label="Clear search" onClick={() => { setQuery(''); setResults([]); }} className="flex h-10 w-10 items-center justify-center text-[#8FA8A8] hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            )}
           </form>
 
-          {/* Autocomplete Dropdown */}
-          {showSuggestions && suggestions.length > 0 && (
-            <ul className="absolute top-full left-0 right-0 mt-2 bg-[#1a1a1a]/95 backdrop-blur-md border border-[#333] rounded-xl shadow-2xl overflow-hidden z-[500] max-h-60 overflow-y-auto">
-              {suggestions.map((place, i) => {
-                const props = place.properties;
-                const title = props.name;
-                const subtitle = [props.city, props.state, props.country].filter(Boolean).join(', ');
+          {open && results.length > 0 && (
+            <ul className="absolute left-0 right-0 top-full mt-2 max-h-64 overflow-y-auto rounded-[14px] border border-[#E8EFEA]/15 bg-[#0A1D23]/97 backdrop-blur-md" role="listbox">
+              {results.map((place, i) => {
+                const p = place.properties;
+                const sub = [p.city || p.district, p.state].filter(Boolean).join(', ');
                 return (
-                  <li 
-                    key={i}
-                    onClick={() => handleSelectSuggestion(place)}
-                    className="px-4 py-3 cursor-pointer hover:bg-indigo-600/20 border-b border-[#333] last:border-b-0 text-sm transition-colors"
-                  >
-                    <div className="font-medium text-white truncate">{title}</div>
-                    {subtitle && <div className="text-xs text-gray-400 truncate mt-0.5">{subtitle}</div>}
+                  <li key={i} role="option" aria-selected="false">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pick(place)}
+                      className="flex w-full items-start gap-3 border-b border-[#E8EFEA]/8 px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-[#123038]"
+                    >
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0" style={{ color: accent }} />
+                      <span className="min-w-0">
+                        <span className="block truncate text-[14px] font-medium text-[#E8EFEA]">{p.name}</span>
+                        {sub && <span className="block truncate text-[12px] text-[#8FA8A8]">{sub}</span>}
+                      </span>
+                    </button>
                   </li>
                 );
               })}
@@ -221,65 +223,93 @@ export default function Map({
           )}
         </div>
 
-        {/* Control Buttons */}
-        <div className="flex gap-2 pointer-events-auto self-end md:self-auto">
-          <button
-            onClick={() => setIsEnglish(!isEnglish)}
-            className="bg-[#1a1a1a]/90 backdrop-blur-md border border-[#333] text-gray-300 hover:text-white px-4 py-2 rounded-xl flex items-center justify-center gap-2 shadow-lg transition-colors"
-            title="Toggle Language"
-          >
-            <Globe className="w-5 h-5 text-emerald-400" />
-            <span className="font-semibold text-sm">{isEnglish ? 'EN' : 'UR'}</span>
+        <div className="pointer-events-auto flex gap-2">
+          <button type="button" onClick={() => setIsEnglish(!isEnglish)} className={`${ctl} gap-2 px-3 text-[13px] font-medium`} aria-label="Switch map labels between English and local" title="Map labels">
+            <Languages className="h-[18px] w-[18px] text-[#8FB8E8]" />
+            {isEnglish ? 'EN' : 'UR'}
           </button>
-
-          <button
-            onClick={handleLocateMe}
-            className="bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl shadow-lg shadow-indigo-500/25 transition-all"
-            title="Locate Me"
-          >
-            <Navigation className="w-5 h-5" />
+          <button type="button" onClick={locate} className={`${ctl} w-12`} style={{ background: accent, color: '#0C2229', borderColor: accent }} aria-label="Use my location" title="Use my location">
+            <LocateFixed className="h-5 w-5" />
           </button>
         </div>
       </div>
 
-      {/* Map Container */}
-      <MapContainer 
-        center={defaultLeafletCenter} 
-        zoom={zoom} 
-        scrollWheelZoom={true} 
-        className="absolute inset-0 z-0 bg-[#0a0a0a]"
+      <div className="absolute inset-0 z-0">
+      <MapContainer
+        ref={setMap}
+        center={[center[1], center[0]]}
+        zoom={zoom}
+        scrollWheelZoom
         zoomControl={false}
         maxBounds={PAKISTAN_BOUNDS}
-        maxBoundsViscosity={1.0}
+        maxBoundsViscosity={1}
         minZoom={5}
+        className="h-full w-full bg-[#0A1D23]"
       >
         <TileLayer
-          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
           url={isEnglish ? TILE_EN : TILE_LOCAL}
+          subdomains="abcd"
         />
-        
-        {onMapClick && <MapEvents onMapClick={onMapClick} />}
-        <MapController target={flyToTarget} />
 
-        {currentLoc && (
-          <Marker position={currentLoc} icon={glowingIcon} />
-        )}
+        {onMapClick && hint && <MapEvents onMapClick={(ll) => onMapClick(ll)} />}
+        <FlyTo target={flyTarget} />
+        <FitBounds points={markers.map((m) => [m.lat, m.lng])} enabled={fitToMarkers} />
+
+        {routePts && map && <Polyline positions={routePts} pathOptions={{ color: '#E9A23B', weight: 4, dashArray: '1 10', lineCap: 'round' }} />}
+        {youAt && <Marker position={youAt} icon={youIcon} interactive={false} />}
 
         {markers.map((m) => (
-          <Marker 
-            key={m.id} 
-            position={[m.lat, m.lng]} 
-            icon={m.color ? createCustomIcon(m.color) : new L.Icon.Default()} 
+          <Marker
+            key={m.id}
+            position={[m.lat, m.lng]}
+            icon={pinIcon(m.color || accent, m.label)}
+            draggable={draggableIds.includes(m.id)}
+            eventHandlers={{
+              dragend: (e) => {
+                const ll = (e.target as L.Marker).getLatLng();
+                onMarkerDrag?.(m.id, { lat: ll.lat, lng: ll.lng });
+              },
+            }}
           />
         ))}
       </MapContainer>
-      
+      </div>
+
+      {/* Zoom buttons (outside Leaflet's DOM on purpose) */}
+      <div className="absolute bottom-9 right-3 z-[400] overflow-hidden rounded-[14px] border border-[#E8EFEA]/15 bg-[#0A1D23]/90 backdrop-blur-md">
+        <button type="button" aria-label="Zoom in" onClick={() => map?.zoomIn()} className="flex h-11 w-11 items-center justify-center border-b border-[#E8EFEA]/10 text-[#E8EFEA] transition-colors hover:bg-[#E8EFEA]/10 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#E9A23B]">
+          <Plus className="h-[18px] w-[18px]" />
+        </button>
+        <button type="button" aria-label="Zoom out" onClick={() => map?.zoomOut()} className="flex h-11 w-11 items-center justify-center text-[#E8EFEA] transition-colors hover:bg-[#E8EFEA]/10 focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[#E9A23B]">
+          <Minus className="h-[18px] w-[18px]" />
+        </button>
+      </div>
+
+      {/* Hint and notices */}
+      {hint && (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-[400] max-w-[calc(100%-5.5rem)] rounded-full border border-[#E8EFEA]/15 bg-[#0A1D23]/90 px-4 py-2 text-[13px] text-[#E8EFEA] backdrop-blur-md">
+          <span className="mr-2 inline-block h-2 w-2 rounded-full align-middle" style={{ background: accent }} />
+          {hint}
+        </div>
+      )}
+      {notice && (
+        <div role="status" className="absolute left-1/2 top-[72px] z-[600] -translate-x-1/2 rounded-full bg-[#E8EFEA] px-4 py-2 text-[13px] font-medium text-[#0C2229]">
+          {notice}
+        </div>
+      )}
+
       <style jsx global>{`
-        .leaflet-map-container .leaflet-container {
-          height: 100%;
-          width: 100%;
-          z-index: 0;
-        }
+        .bba-map .leaflet-container { height: 100%; width: 100%; background: #0a1d23; font-family: inherit; }
+        .bba-map.selecting .leaflet-container { cursor: crosshair; }
+        /* Map tint. Tweak these filters to shift the map towards your brand teal. */
+        .bba-map.tint-en .leaflet-tile-pane { filter: sepia(1) hue-rotate(150deg) saturate(1.1) brightness(1.15) contrast(1.05); }
+        .bba-map.tint-local .leaflet-tile-pane { filter: invert(1) grayscale(1) brightness(.78) contrast(1.1) sepia(1) hue-rotate(150deg) saturate(1.1); }
+        .bba-map .leaflet-control-attribution { background: rgba(10,29,35,.85) !important; color: #8fa8a8 !important; font-size: 10px; border-radius: 8px 0 0 0; }
+        .bba-map .leaflet-control-attribution a { color: #8fa8a8 !important; }
+        @keyframes bba-ping { 0% { transform: scale(.5); opacity: .7 } 100% { transform: scale(1.6); opacity: 0 } }
+        .bba-ring { animation: bba-ping 1.8s ease-out infinite; }
+        @media (prefers-reduced-motion: reduce) { .bba-ring { animation: none; opacity: .3; } }
       `}</style>
     </div>
   );

@@ -10,7 +10,7 @@ export default function RiderLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col h-full bg-gray-950 text-white">
+    <div className="flex min-h-[100dvh] flex-col bg-gray-950 text-white">
       <header className="px-4 py-3 border-b border-[#ffffff15] bg-[#121212] flex items-center justify-between sticky top-0 z-50">
         <div className="font-bold text-lg text-emerald-400">BBA Rider</div>
         <div className="flex items-center gap-3">
@@ -19,9 +19,8 @@ export default function RiderLayout({
           </div>
         </div>
       </header>
-      <main className="flex-1 relative flex flex-col p-4 max-w-lg mx-auto w-full">
-        {children}
-      </main>
+      {/* Full width: the page controls its own max width and padding */}
+      <main className="flex-1 w-full">{children}</main>
     </div>
   );
 }
